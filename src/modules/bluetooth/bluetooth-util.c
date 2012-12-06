@@ -1591,6 +1591,20 @@ static void set_property(pa_bluetooth_discovery *y, const char *bus, const char 
     pa_assert(interface);
     pa_assert(prop_name);
 
+    if (y->version >= BLUEZ_VERSION_5) {
+        pa_assert_se(m = dbus_message_new_method_call(bus, path, "org.freedesktop.DBus.Properties", "Set"));
+        dbus_message_iter_init_append(m, &i);
+        dbus_message_iter_append_basic(&i, DBUS_TYPE_STRING, &interface);
+        dbus_message_iter_append_basic(&i, DBUS_TYPE_STRING, &prop_name);
+        pa_dbus_append_basic_variant(&i, prop_type, prop_value);
+
+        dbus_message_set_no_reply(m, true);
+        pa_assert_se(dbus_connection_send(pa_dbus_connection_get(y->connection), m, NULL));
+        dbus_message_unref(m);
+
+        return;
+    }
+
     pa_assert_se(m = dbus_message_new_method_call(bus, path, interface, "SetProperty"));
     dbus_message_iter_init_append(m, &i);
     dbus_message_iter_append_basic(&i, DBUS_TYPE_STRING, &prop_name);
