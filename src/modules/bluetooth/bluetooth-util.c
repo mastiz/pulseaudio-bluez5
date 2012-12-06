@@ -864,7 +864,7 @@ finish:
 static void register_endpoint(pa_bluetooth_discovery *y, const char *path, const char *endpoint, const char *uuid) {
     DBusMessage *m;
     DBusMessageIter i, d;
-    uint8_t codec = 0;
+    uint8_t codec;
     const char *interface = y->version == BLUEZ_VERSION_4 ? "org.bluez.Media" : "org.bluez.Media1";
 
     pa_log_debug("Registering %s on adapter %s.", endpoint, path);
@@ -881,13 +881,17 @@ static void register_endpoint(pa_bluetooth_discovery *y, const char *path, const
 
     pa_dbus_append_basic_variant_dict_entry(&d, "UUID", DBUS_TYPE_STRING, &uuid);
 
-    pa_dbus_append_basic_variant_dict_entry(&d, "Codec", DBUS_TYPE_BYTE, &codec);
 
     if (pa_streq(uuid, HFP_AG_UUID) || pa_streq(uuid, HFP_HS_UUID)) {
         uint8_t capability = 0;
+
+        codec = 1;
+
         pa_dbus_append_basic_array_variant_dict_entry(&d, "Capabilities", DBUS_TYPE_BYTE, &capability, 1);
     } else {
         a2dp_sbc_t capabilities;
+
+        codec = 0;
 
         capabilities.channel_mode = SBC_CHANNEL_MODE_MONO | SBC_CHANNEL_MODE_DUAL_CHANNEL |
                                     SBC_CHANNEL_MODE_STEREO | SBC_CHANNEL_MODE_JOINT_STEREO;
@@ -902,6 +906,8 @@ static void register_endpoint(pa_bluetooth_discovery *y, const char *path, const
 
         pa_dbus_append_basic_array_variant_dict_entry(&d, "Capabilities", DBUS_TYPE_BYTE, &capabilities, sizeof(capabilities));
     }
+
+    pa_dbus_append_basic_variant_dict_entry(&d, "Codec", DBUS_TYPE_BYTE, &codec);
 
     dbus_message_iter_close_container(&i, &d);
 
