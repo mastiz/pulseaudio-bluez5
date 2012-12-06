@@ -1154,6 +1154,32 @@ static int transport_parse_property(pa_bluetooth_transport *t, DBusMessageIter *
 
             break;
         }
+
+        case DBUS_TYPE_BYTE: {
+            uint8_t value;
+
+            dbus_message_iter_get_basic(&variant_i, &value);
+
+            if (pa_streq(key, "MicrophoneGain")) {
+                uint8_t gain;
+
+                if ((gain = PA_MIN(value, HSP_MAX_GAIN)) == t->microphone_gain)
+                    break;
+
+                t->microphone_gain = gain;
+                pa_hook_fire(&t->device->discovery->hooks[PA_BLUETOOTH_HOOK_TRANSPORT_MICROPHONE_GAIN_CHANGED], t);
+            } else if (pa_streq(key, "SpeakerGain")) {
+                uint8_t gain;
+
+                if ((gain = PA_MIN(value, HSP_MAX_GAIN)) == t->speaker_gain)
+                    break;
+
+                t->speaker_gain = gain;
+                pa_hook_fire(&t->device->discovery->hooks[PA_BLUETOOTH_HOOK_TRANSPORT_SPEAKER_GAIN_CHANGED], t);
+            }
+
+            break;
+        }
     }
 
     return 0;
@@ -1621,6 +1647,14 @@ void pa_bluetooth_transport_set_microphone_gain(pa_bluetooth_transport *t, uint1
     pa_assert(t);
     pa_assert(t->profile == PROFILE_HSP);
 
+    if (t->device->discovery->version >= BLUEZ_VERSION_5) {
+        uint8_t g = (uint8_t) gain;
+
+        set_property(t->device->discovery, t->owner, t->path, "org.bluez.MediaTransport1",
+                     "MicrophoneGain", DBUS_TYPE_BYTE, &g);
+        return;
+    }
+
     set_property(t->device->discovery, "org.bluez", t->device->path, "org.bluez.Headset",
                  "MicrophoneGain", DBUS_TYPE_UINT16, &gain);
 }
@@ -1630,6 +1664,13 @@ void pa_bluetooth_transport_set_speaker_gain(pa_bluetooth_transport *t, uint16_t
 
     pa_assert(t);
     pa_assert(t->profile == PROFILE_HSP);
+
+    if (t->device->discovery->version >= BLUEZ_VERSION_5) {
+        uint8_t g = (uint8_t) gain;
+
+        set_property(t->device->discovery, t->owner, t->path, "org.bluez.MediaTransport1", "SpeakerGain", DBUS_TYPE_BYTE, &g);
+        return;
+    }
 
     set_property(t->device->discovery, "org.bluez", t->device->path, "org.bluez.Headset",
                  "SpeakerGain", DBUS_TYPE_UINT16, &gain);
