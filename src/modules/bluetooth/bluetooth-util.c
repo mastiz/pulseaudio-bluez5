@@ -178,6 +178,33 @@ static int profile_from_interface(const char *interface, enum profile *p) {
     return -1;
 }
 
+static void profile_to_remote_uuid(enum profile p, const char *res[2]) {
+    pa_assert(p != PROFILE_OFF);
+
+    switch(p) {
+        case PROFILE_A2DP:
+            res[0] = A2DP_SINK_UUID;
+            res[1] = NULL;
+            return;
+        case PROFILE_A2DP_SOURCE:
+            res[0] = A2DP_SOURCE_UUID;
+            res[1] = NULL;
+            return;
+        case PROFILE_HSP:
+            res[0] = HSP_HS_UUID;
+            res[1] = HFP_HS_UUID;
+            return;
+        case PROFILE_HFGW:
+            res[0] = HSP_AG_UUID;
+            res[1] = HFP_AG_UUID;
+            return;
+        case PROFILE_OFF:
+            break;
+    }
+
+    pa_assert_not_reached();
+}
+
 static pa_bluetooth_transport_state_t audio_state_to_transport_state(pa_bt_audio_state_t state) {
     switch (state) {
         case PA_BT_AUDIO_STATE_INVALID: /* Typically if state hasn't been received yet */
@@ -1644,6 +1671,7 @@ static DBusMessage *endpoint_set_configuration(DBusConnection *conn, DBusMessage
     DBusMessageIter args, props;
     DBusMessage *r;
     bool old_any_connected;
+    const char *remote_uuid[2];
 
     if (!dbus_message_iter_init(m, &args) || !pa_streq(dbus_message_get_signature(m), "oa{sv}")) {
         pa_log("Invalid signature for method SetConfiguration");
@@ -1706,6 +1734,10 @@ static DBusMessage *endpoint_set_configuration(DBusConnection *conn, DBusMessage
         dbus_message_iter_next(&props);
     }
 
+    /* FIXME: with BlueZ 5, check if this is racy in case a newly paired
+     * device gets connected very fast, before BlueZ has created it. This is
+     * very unlikely since the device will be created before the pairing
+     * procedure is complete */
     d = found_device(y, dev_path);
     if (!d)
         goto fail;
@@ -1718,6 +1750,27 @@ static DBusMessage *endpoint_set_configuration(DBusConnection *conn, DBusMessage
         p = PROFILE_A2DP;
     else
         p = PROFILE_A2DP_SOURCE;
+
+    /* Check if the UUID was already reported by BlueZ, since the telephony
+     * component (oFono) could be faster than BlueZ */
+    profile_to_remote_uuid(p, remote_uuid);
+
+    if (!pa_bluetooth_uuid_has(d->uuids, remote_uuid[0]) && !pa_bluetooth_uuid_has(d->uuids, remote_uuid[1])) {
+        pa_bluetooth_uuid *node;
+        struct pa_bluetooth_hook_uuid_data uuiddata;
+
+        pa_log_info("Endpoint with UUID '%s' configured before remote UUID was reported by BlueZ.", uuid);
+
+        /* This might generate duplicated UUID_ADDED hooks since the endpoint
+         * doesn't receive the exact remote UUID (HSP cannot be distinguished
+         * from HFP). However, these duplicated hooks should do no harm */
+        node = uuid_new(remote_uuid[0]);
+        PA_LLIST_PREPEND(pa_bluetooth_uuid, d->uuids, node);
+
+        uuiddata.device = d;
+        uuiddata.uuid = uuid;
+        pa_hook_fire(&d->discovery->hooks[PA_BLUETOOTH_HOOK_DEVICE_UUID_ADDED], &uuiddata);
+    }
 
     if (d->transports[p] != NULL) {
         pa_log("Cannot configure transport %s because profile %d is already used", path, p);
