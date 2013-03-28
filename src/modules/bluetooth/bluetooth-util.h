@@ -181,7 +181,10 @@ const char *pa_bt_profile_to_string(enum profile profile);
 struct pa_bluetooth_backend;
 typedef struct pa_bluetooth_backend pa_bluetooth_backend;
 
+typedef void (*pa_bt_backend_transport_removed_cb)(void *bp, pa_bluetooth_transport *t);
+
 struct pa_bluetooth_backend {
+    pa_bt_backend_transport_removed_cb transport_removed;
 };
 
 int pa_bt_backend_register(pa_bluetooth_discovery *y, pa_bluetooth_backend *b, enum profile p, void *bp);

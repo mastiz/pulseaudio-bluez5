@@ -274,9 +274,11 @@ static void transport_free(pa_bluetooth_transport *t) {
     pa_xfree(t);
 }
 
-static void bluez_backend_transport_removed(bluez_backend_private *bbp, pa_bluetooth_transport *t) {
+static void bluez_backend_transport_removed(void *bp, pa_bluetooth_transport *t) {
+    bluez_backend_private *bbp;
     bluez_transport_private *p;
 
+    pa_assert_se(bbp = bp);
     pa_assert(t);
     pa_assert_se(p = t->backend_private);
 
@@ -291,11 +293,16 @@ static void device_free(pa_bluetooth_device *d) {
     pa_assert(d);
 
     for (i = 0; i < PA_BLUETOOTH_PROFILE_COUNT; i++) {
+        pa_bluetooth_backend *backend;
+
         if (!(t = d->transports[i]))
             continue;
 
         d->transports[i] = NULL;
-        bluez_backend_transport_removed(&d->discovery->backend_private, t);
+
+        if ((backend = d->discovery->profiles[i].backend))
+            backend->transport_removed(d->discovery->profiles[i].backend_private, t);
+
         t->state = PA_BLUETOOTH_TRANSPORT_STATE_DISCONNECTED;
         pa_hook_fire(&d->discovery->hooks[PA_BLUETOOTH_HOOK_TRANSPORT_STATE_CHANGED], t);
         transport_free(t);
@@ -2022,6 +2029,7 @@ static DBusHandlerResult endpoint_handler(DBusConnection *c, DBusMessage *m, voi
 }
 
 pa_bluetooth_backend bluez_backend = {
+    .transport_removed = bluez_backend_transport_removed,
 };
 
 static void bluez_backend_init(pa_bluetooth_discovery *y) {
