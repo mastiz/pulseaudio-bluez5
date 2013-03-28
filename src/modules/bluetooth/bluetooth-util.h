@@ -175,4 +175,16 @@ char *pa_bluetooth_cleanup_name(const char *name);
 bool pa_bluetooth_uuid_has(pa_bluetooth_uuid *uuids, const char *uuid);
 const char *pa_bt_profile_to_string(enum profile profile);
 
+/*
+ * Backend registration mechanism
+ */
+struct pa_bluetooth_backend;
+typedef struct pa_bluetooth_backend pa_bluetooth_backend;
+
+struct pa_bluetooth_backend {
+};
+
+int pa_bt_backend_register(pa_bluetooth_discovery *y, pa_bluetooth_backend *b, enum profile p, void *bp);
+void pa_bt_backend_unregister(pa_bluetooth_discovery *y, pa_bluetooth_backend *b, enum profile p);
+
 #endif

@@ -91,6 +91,11 @@ typedef enum pa_bluez_version {
     BLUEZ_VERSION_5,
 } pa_bluez_version_t;
 
+struct profile_data {
+    pa_bluetooth_backend *backend;
+    void *backend_private;
+};
+
 struct pa_bluetooth_discovery {
     PA_REFCNT_DECLARE;
 
@@ -101,6 +106,7 @@ struct pa_bluetooth_discovery {
     bool adapters_listed;
     pa_hashmap *devices;
     pa_hashmap *transports;
+    struct profile_data profiles[PA_BLUETOOTH_PROFILE_COUNT];
     pa_hook hooks[PA_BLUETOOTH_HOOK_MAX];
     bool filter_added;
 };
@@ -2277,4 +2283,30 @@ bool pa_bluetooth_uuid_has(pa_bluetooth_uuid *uuids, const char *uuid) {
     }
 
     return false;
+}
+
+int pa_bt_backend_register(pa_bluetooth_discovery *y, pa_bluetooth_backend *b, enum profile p, void *bp) {
+    pa_assert(y);
+    pa_assert(b);
+
+    if (y->profiles[p].backend) {
+        pa_log_error("Bluetooth backend already exists for profile %s", pa_bt_profile_to_string(p));
+        return -1;
+    }
+
+    y->profiles[p].backend = b;
+    y->profiles[p].backend_private = bp;
+
+    return 0;
+}
+
+void pa_bt_backend_unregister(pa_bluetooth_discovery *y, pa_bluetooth_backend *b, enum profile p) {
+    pa_assert(y);
+    pa_assert(b);
+
+    if (y->profiles[p].backend != b)
+        return;
+
+    y->profiles[p].backend = NULL;
+    y->profiles[p].backend_private = NULL;
 }
