@@ -96,6 +96,9 @@ struct profile_data {
     void *backend_private;
 };
 
+typedef struct bluez_backend_private {
+} bluez_backend_private;
+
 struct pa_bluetooth_discovery {
     PA_REFCNT_DECLARE;
 
@@ -109,6 +112,8 @@ struct pa_bluetooth_discovery {
     struct profile_data profiles[PA_BLUETOOTH_PROFILE_COUNT];
     pa_hook hooks[PA_BLUETOOTH_HOOK_MAX];
     bool filter_added;
+
+    bluez_backend_private backend_private;
 };
 
 static void get_properties_reply(DBusPendingCall *pending, void *userdata);
@@ -1972,6 +1977,33 @@ static DBusHandlerResult endpoint_handler(DBusConnection *c, DBusMessage *m, voi
     return DBUS_HANDLER_RESULT_HANDLED;
 }
 
+pa_bluetooth_backend bluez_backend = {
+};
+
+static void bluez_backend_init(pa_bluetooth_discovery *y) {
+    bluez_backend_private *bbp = &y->backend_private;
+
+    pa_bt_backend_register(y, &bluez_backend, PROFILE_A2DP, bbp);
+    pa_bt_backend_register(y, &bluez_backend, PROFILE_A2DP_SOURCE, bbp);
+
+    if (y->version >= BLUEZ_VERSION_5)
+        return;
+
+    pa_bt_backend_register(y, &bluez_backend, PROFILE_HSP, bbp);
+    pa_bt_backend_register(y, &bluez_backend, PROFILE_HFGW, bbp);
+}
+
+static void bluez_backend_done(pa_bluetooth_discovery *y) {
+    pa_bt_backend_unregister(y, &bluez_backend, PROFILE_A2DP);
+    pa_bt_backend_unregister(y, &bluez_backend, PROFILE_A2DP_SOURCE);
+
+    if (y->version >= BLUEZ_VERSION_5)
+        return;
+
+    pa_bt_backend_unregister(y, &bluez_backend, PROFILE_HSP);
+    pa_bt_backend_unregister(y, &bluez_backend, PROFILE_HFGW);
+}
+
 pa_bluetooth_discovery* pa_bluetooth_discovery_get(pa_core *c) {
     DBusError err;
     pa_bluetooth_discovery *y;
@@ -1999,6 +2031,8 @@ pa_bluetooth_discovery* pa_bluetooth_discovery_get(pa_core *c) {
         pa_hook_init(&y->hooks[i], y);
 
     pa_shared_set(c, "bluetooth-discovery", y);
+
+    bluez_backend_init(y);
 
     if (setup_dbus(y) < 0)
         goto fail;
@@ -2075,6 +2109,8 @@ void pa_bluetooth_discovery_unref(pa_bluetooth_discovery *y) {
         return;
 
     pa_dbus_free_pending_list(&y->pending);
+
+    bluez_backend_done(y);
 
     if (y->devices) {
         remove_all_devices(y);
