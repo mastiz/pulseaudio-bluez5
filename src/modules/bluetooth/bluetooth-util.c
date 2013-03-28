@@ -1474,6 +1474,18 @@ bool pa_bluetooth_device_any_audio_connected(const pa_bluetooth_device *d) {
 }
 
 int pa_bluetooth_transport_acquire(pa_bluetooth_transport *t, bool optional, size_t *imtu, size_t *omtu) {
+    struct pa_bluetooth_discovery *y;
+    pa_bluetooth_backend *backend;
+
+    pa_assert(t);
+    pa_assert(t->device);
+    pa_assert_se(y = t->device->discovery);
+    pa_assert_se(backend = y->profiles[t->profile].backend);
+
+    return backend->transport_acquire(y->profiles[t->profile].backend_private, t, optional, imtu, omtu);
+}
+
+static int bluez_backend_transport_acquire(void *bp, pa_bluetooth_transport *t, bool optional, size_t *imtu, size_t *omtu) {
     DBusMessage *m, *r;
     DBusError err;
     int ret;
@@ -1485,6 +1497,8 @@ int pa_bluetooth_transport_acquire(pa_bluetooth_transport *t, bool optional, siz
     pa_assert(t->device);
     pa_assert(t->device->discovery);
     pa_assert_se(p = t->backend_private);
+
+    assert(t);
 
     dbus_error_init(&err);
 
@@ -1546,6 +1560,18 @@ fail:
 }
 
 void pa_bluetooth_transport_release(pa_bluetooth_transport *t) {
+    struct pa_bluetooth_discovery *y;
+    pa_bluetooth_backend *backend;
+
+    pa_assert(t);
+    pa_assert(t->device);
+    pa_assert_se(y = t->device->discovery);
+    pa_assert_se(backend = y->profiles[t->profile].backend);
+
+    return backend->transport_release(y->profiles[t->profile].backend_private, t);
+}
+
+static void bluez_backend_transport_release(void *bp, pa_bluetooth_transport *t) {
     DBusMessage *m;
     DBusError err;
     bluez_transport_private *p;
@@ -2030,6 +2056,8 @@ static DBusHandlerResult endpoint_handler(DBusConnection *c, DBusMessage *m, voi
 
 pa_bluetooth_backend bluez_backend = {
     .transport_removed = bluez_backend_transport_removed,
+    .transport_acquire = bluez_backend_transport_acquire,
+    .transport_release = bluez_backend_transport_release,
 };
 
 static void bluez_backend_init(pa_bluetooth_discovery *y) {

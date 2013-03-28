@@ -182,9 +182,14 @@ struct pa_bluetooth_backend;
 typedef struct pa_bluetooth_backend pa_bluetooth_backend;
 
 typedef void (*pa_bt_backend_transport_removed_cb)(void *bp, pa_bluetooth_transport *t);
+typedef int (*pa_bt_backend_transport_acquire_cb)(void *bp, pa_bluetooth_transport *t, bool optional, size_t *imtu,
+                                                  size_t *omtu);
+typedef void (*pa_bt_backend_transport_release_cb)(void *bp, pa_bluetooth_transport *t);
 
 struct pa_bluetooth_backend {
     pa_bt_backend_transport_removed_cb transport_removed;
+    pa_bt_backend_transport_acquire_cb transport_acquire;
+    pa_bt_backend_transport_release_cb transport_release;
 };
 
 int pa_bt_backend_register(pa_bluetooth_discovery *y, pa_bluetooth_backend *b, enum profile p, void *bp);
