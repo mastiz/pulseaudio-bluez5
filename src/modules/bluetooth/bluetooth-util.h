@@ -186,12 +186,14 @@ typedef int (*pa_bt_backend_transport_acquire_cb)(void *bp, pa_bluetooth_transpo
                                                   size_t *omtu);
 typedef void (*pa_bt_backend_transport_release_cb)(void *bp, pa_bluetooth_transport *t);
 typedef void (*pa_bt_backend_set_microphone_gain_cb)(void *bp, pa_bluetooth_transport *t, uint16_t value);
+typedef void (*pa_bt_backend_set_speaker_gain_cb)(void *bp, pa_bluetooth_transport *t, uint16_t value);
 
 struct pa_bluetooth_backend {
     pa_bt_backend_transport_removed_cb transport_removed;
     pa_bt_backend_transport_acquire_cb transport_acquire;
     pa_bt_backend_transport_release_cb transport_release;
     pa_bt_backend_set_microphone_gain_cb set_microphone_gain;
+    pa_bt_backend_set_speaker_gain_cb set_speaker_gain;
 };
 
 int pa_bt_backend_register(pa_bluetooth_discovery *y, pa_bluetooth_backend *b, enum profile p, void *bp);

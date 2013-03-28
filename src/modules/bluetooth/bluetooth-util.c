@@ -1638,13 +1638,15 @@ void pa_bluetooth_transport_set_microphone_gain(pa_bluetooth_transport *t, uint1
 }
 
 void pa_bluetooth_transport_set_speaker_gain(pa_bluetooth_transport *t, uint16_t value) {
-    dbus_uint16_t gain = PA_MIN(value, HSP_MAX_GAIN);
+    pa_bluetooth_discovery *y;
+    pa_bluetooth_backend *backend;
 
     pa_assert(t);
     pa_assert(t->profile == PROFILE_HSP);
+    pa_assert_se(y = t->device->discovery);
+    pa_assert_se(backend = y->profiles[t->profile].backend);
 
-    set_property(t->device->discovery, "org.bluez", t->device->path, "org.bluez.Headset",
-                 "SpeakerGain", DBUS_TYPE_UINT16, &gain);
+    backend->set_speaker_gain(y->profiles[t->profile].backend_private, t, PA_MIN(value, HSP_MAX_GAIN));
 }
 
 static int setup_dbus(pa_bluetooth_discovery *y) {
@@ -2067,11 +2069,23 @@ static void bluez_backend_set_microphone_gain(void *bp, pa_bluetooth_transport *
                  "MicrophoneGain", DBUS_TYPE_UINT16, &gain);
 }
 
+static void bluez_backend_set_speaker_gain(void *bp, pa_bluetooth_transport *t, uint16_t value)
+{
+    dbus_uint16_t gain = value;
+
+    pa_assert(t);
+    pa_assert(t->profile == PROFILE_HSP);
+
+    set_property(t->device->discovery, "org.bluez", t->device->path, "org.bluez.Headset",
+                 "SpeakerGain", DBUS_TYPE_UINT16, &gain);
+}
+
 pa_bluetooth_backend bluez_backend = {
     .transport_removed = bluez_backend_transport_removed,
     .transport_acquire = bluez_backend_transport_acquire,
     .transport_release = bluez_backend_transport_release,
     .set_microphone_gain = bluez_backend_set_microphone_gain,
+    .set_speaker_gain = bluez_backend_set_speaker_gain,
 };
 
 static void bluez_backend_init(pa_bluetooth_discovery *y) {
