@@ -588,7 +588,6 @@ static int parse_audio_property(pa_bluetooth_device *d, const char *interface, D
 
             if (pa_streq(key, "State")) {
                 pa_bt_audio_state_t state = audio_state_from_string(value);
-                pa_bluetooth_transport_state_t old_state;
 
                 pa_log_debug("Device %s interface %s property 'State' changed to value '%s'", d->path, interface, value);
 
@@ -607,16 +606,7 @@ static int parse_audio_property(pa_bluetooth_device *d, const char *interface, D
                 if (!transport)
                     break;
 
-                old_state = transport->state;
-                transport->state = audio_state_to_transport_state(state);
-
-                if (transport->state != old_state) {
-                    pa_log_debug("Transport %s (profile %s) changed state from %s to %s.", transport->path,
-                                 pa_bt_profile_to_string(transport->profile), transport_state_to_string(old_state),
-                                 transport_state_to_string(transport->state));
-
-                    pa_hook_fire(&d->discovery->hooks[PA_BLUETOOTH_HOOK_TRANSPORT_STATE_CHANGED], transport);
-                }
+                pa_bt_backend_notify_state(transport, audio_state_to_transport_state(state));
             }
 
             break;
@@ -628,8 +618,6 @@ static int parse_audio_property(pa_bluetooth_device *d, const char *interface, D
             dbus_message_iter_get_basic(&variant_i, &value);
 
             if (pa_streq(key, "MicrophoneGain")) {
-                uint16_t gain;
-
                 pa_log_debug("dbus: property '%s' changed to value '%u'", key, value);
 
                 if (!transport) {
@@ -637,14 +625,8 @@ static int parse_audio_property(pa_bluetooth_device *d, const char *interface, D
                     return -1;
                 }
 
-                if ((gain = PA_MIN(value, HSP_MAX_GAIN)) == transport->microphone_gain)
-                    break;
-
-                transport->microphone_gain = gain;
-                pa_hook_fire(&d->discovery->hooks[PA_BLUETOOTH_HOOK_TRANSPORT_MICROPHONE_GAIN_CHANGED], transport);
+                pa_bt_backend_notify_microphone_gain(transport, PA_MIN(value, HSP_MAX_GAIN));
             } else if (pa_streq(key, "SpeakerGain")) {
-                uint16_t gain;
-
                 pa_log_debug("dbus: property '%s' changed to value '%u'", key, value);
 
                 if (!transport) {
@@ -652,11 +634,7 @@ static int parse_audio_property(pa_bluetooth_device *d, const char *interface, D
                     return -1;
                 }
 
-                if ((gain = PA_MIN(value, HSP_MAX_GAIN)) == transport->speaker_gain)
-                    break;
-
-                transport->speaker_gain = gain;
-                pa_hook_fire(&d->discovery->hooks[PA_BLUETOOTH_HOOK_TRANSPORT_SPEAKER_GAIN_CHANGED], transport);
+                pa_bt_backend_notify_speaker_gain(transport, PA_MIN(value, HSP_MAX_GAIN));
             }
 
             break;
@@ -1101,11 +1079,8 @@ static int transport_parse_property(pa_bluetooth_transport *t, DBusMessageIter *
             dbus_bool_t value;
             dbus_message_iter_get_basic(&variant_i, &value);
 
-            if (pa_streq(key, "NREC") && t->nrec != value) {
-                t->nrec = value;
-                pa_log_debug("Transport %s: Property 'NREC' changed to %s.", t->path, t->nrec ? "True" : "False");
-                pa_hook_fire(&t->device->discovery->hooks[PA_BLUETOOTH_HOOK_TRANSPORT_NREC_CHANGED], t);
-            }
+            if (pa_streq(key, "NREC"))
+                pa_bt_backend_notify_nrec(t, value);
 
             break;
          }
@@ -1774,20 +1749,8 @@ static DBusMessage *endpoint_clear_configuration(DBusConnection *c, DBusMessage 
         goto fail;
     }
 
-    if ((t = pa_hashmap_get(y->transports, path))) {
-        bool old_any_connected = pa_bluetooth_device_any_audio_connected(t->device);
-
-        pa_log_debug("Clearing transport %s profile %d", t->path, t->profile);
-        t->device->transports[t->profile] = NULL;
-        pa_hashmap_remove(y->transports, t->path);
-        t->state = PA_BLUETOOTH_TRANSPORT_STATE_DISCONNECTED;
-        pa_hook_fire(&y->hooks[PA_BLUETOOTH_HOOK_TRANSPORT_STATE_CHANGED], t);
-
-        if (old_any_connected != pa_bluetooth_device_any_audio_connected(t->device))
-            run_callback(t->device, false);
-
-        transport_free(t);
-    }
+    if ((t = pa_hashmap_get(y->transports, path)))
+        pa_bt_backend_notify_transport_removed(t);
 
     pa_assert_se(r = dbus_message_new_method_return(m));
 
@@ -2309,4 +2272,96 @@ void pa_bt_backend_unregister(pa_bluetooth_discovery *y, pa_bluetooth_backend *b
 
     y->profiles[p].backend = NULL;
     y->profiles[p].backend_private = NULL;
+}
+
+void pa_bt_backend_notify_transport_removed(pa_bluetooth_transport *t) {
+    pa_bluetooth_discovery *y;
+    pa_bluetooth_device *d;
+    bool old_any_connected;
+
+    pa_assert(t);
+    pa_assert_se(d = t->device);
+    pa_assert_se(y = d->discovery);
+
+    old_any_connected = pa_bluetooth_device_any_audio_connected(d);
+
+    pa_log_debug("Removing transport %s profile %d", t->path, t->profile);
+
+    d->transports[t->profile] = NULL;
+    pa_hashmap_remove(y->transports, t->path);
+    t->state = PA_BLUETOOTH_TRANSPORT_STATE_DISCONNECTED;
+    pa_hook_fire(&y->hooks[PA_BLUETOOTH_HOOK_TRANSPORT_STATE_CHANGED], t);
+
+    if (old_any_connected != pa_bluetooth_device_any_audio_connected(d))
+        run_callback(d, false);
+
+    transport_free(t);
+}
+
+void pa_bt_backend_notify_state(pa_bluetooth_transport *t, pa_bluetooth_transport_state_t state) {
+    pa_bluetooth_discovery *y;
+    pa_bluetooth_device *d;
+
+    pa_assert(t);
+    pa_assert_se(d = t->device);
+    pa_assert_se(y = d->discovery);
+
+    if (t->state == state)
+        return;
+
+    pa_log_debug("Transport %s (profile %s) changed state from %s to %s.", t->path,
+                 pa_bt_profile_to_string(t->profile), transport_state_to_string(t->state),
+                 transport_state_to_string(state));
+
+    t->state = state;
+
+    pa_hook_fire(&d->discovery->hooks[PA_BLUETOOTH_HOOK_TRANSPORT_STATE_CHANGED], t);
+}
+
+void pa_bt_backend_notify_nrec(pa_bluetooth_transport *t, bool nrec) {
+    pa_bluetooth_discovery *y;
+    pa_bluetooth_device *d;
+
+    pa_assert(t);
+    pa_assert_se(d = t->device);
+    pa_assert_se(y = d->discovery);
+
+    if (t->nrec == nrec)
+        return;
+
+    t->nrec = nrec;
+    pa_log_debug("Transport %s: Property 'NREC' changed to %s.", t->path, t->nrec ? "True" : "False");
+    pa_hook_fire(&y->hooks[PA_BLUETOOTH_HOOK_TRANSPORT_NREC_CHANGED], t);
+}
+
+void pa_bt_backend_notify_microphone_gain(pa_bluetooth_transport *t, uint16_t value) {
+    pa_bluetooth_discovery *y;
+    pa_bluetooth_device *d;
+
+    pa_assert(t);
+    pa_assert_se(d = t->device);
+    pa_assert_se(y = d->discovery);
+    pa_assert(value <= HSP_MAX_GAIN);
+
+    if (t->microphone_gain == value)
+        return;
+
+    t->microphone_gain = value;
+    pa_hook_fire(&y->hooks[PA_BLUETOOTH_HOOK_TRANSPORT_MICROPHONE_GAIN_CHANGED], t);
+}
+
+void pa_bt_backend_notify_speaker_gain(pa_bluetooth_transport *t, uint16_t value) {
+    pa_bluetooth_discovery *y;
+    pa_bluetooth_device *d;
+
+    pa_assert(t);
+    pa_assert_se(d = t->device);
+    pa_assert_se(y = d->discovery);
+    pa_assert(value <= HSP_MAX_GAIN);
+
+    if (t->speaker_gain == value)
+        return;
+
+    t->speaker_gain = value;
+    pa_hook_fire(&y->hooks[PA_BLUETOOTH_HOOK_TRANSPORT_SPEAKER_GAIN_CHANGED], t);
 }
