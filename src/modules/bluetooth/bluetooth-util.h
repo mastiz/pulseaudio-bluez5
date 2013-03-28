@@ -91,8 +91,6 @@ typedef enum pa_bluetooth_transport_state {
 
 struct pa_bluetooth_transport {
     pa_bluetooth_device *device;
-    char *owner;
-    char *path;
     enum profile profile;
     uint8_t codec;
     uint8_t *config;
@@ -102,6 +100,8 @@ struct pa_bluetooth_transport {
     bool nrec;
     uint16_t microphone_gain; /* Used for HSP/HFP */
     uint16_t speaker_gain; /* Used for HSP/HFP */
+
+    void *backend_private;
 };
 
 /* This enum is shared among Audio, Headset, AudioSink, and AudioSource, although not all values are acceptable in all profiles */

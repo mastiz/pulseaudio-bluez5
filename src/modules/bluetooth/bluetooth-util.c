@@ -97,7 +97,13 @@ struct profile_data {
 };
 
 typedef struct bluez_backend_private {
+    pa_hashmap *transports;
 } bluez_backend_private;
+
+typedef struct bluez_transport_private {
+    char *owner;
+    char *path;
+} bluez_transport_private;
 
 struct pa_bluetooth_discovery {
     PA_REFCNT_DECLARE;
@@ -108,7 +114,6 @@ struct pa_bluetooth_discovery {
     pa_bluez_version_t version;
     bool adapters_listed;
     pa_hashmap *devices;
-    pa_hashmap *transports;
     struct profile_data profiles[PA_BLUETOOTH_PROFILE_COUNT];
     pa_hook hooks[PA_BLUETOOTH_HOOK_MAX];
     bool filter_added;
@@ -252,13 +257,30 @@ static pa_bluetooth_device* device_new(pa_bluetooth_discovery *discovery, const 
     return d;
 }
 
+static void bluez_transport_free(bluez_transport_private *p) {
+    pa_assert(p);
+
+    pa_xfree(p->owner);
+    pa_xfree(p->path);
+    pa_xfree(p);
+}
+
 static void transport_free(pa_bluetooth_transport *t) {
     pa_assert(t);
 
-    pa_xfree(t->owner);
-    pa_xfree(t->path);
+    bluez_transport_free(t->backend_private);
+
     pa_xfree(t->config);
     pa_xfree(t);
+}
+
+static void bluez_backend_transport_removed(bluez_backend_private *bbp, pa_bluetooth_transport *t) {
+    bluez_transport_private *p;
+
+    pa_assert(t);
+    pa_assert_se(p = t->backend_private);
+
+    pa_hashmap_remove(bbp->transports, p->path);
 }
 
 static void device_free(pa_bluetooth_device *d) {
@@ -273,7 +295,7 @@ static void device_free(pa_bluetooth_device *d) {
             continue;
 
         d->transports[i] = NULL;
-        pa_hashmap_remove(d->discovery->transports, t->path);
+        bluez_backend_transport_removed(&d->discovery->backend_private, t);
         t->state = PA_BLUETOOTH_TRANSPORT_STATE_DISCONNECTED;
         pa_hook_fire(&d->discovery->hooks[PA_BLUETOOTH_HOOK_TRANSPORT_STATE_CHANGED], t);
         transport_free(t);
@@ -1070,6 +1092,10 @@ static void init_bluez(pa_bluetooth_discovery *y) {
 static int transport_parse_property(pa_bluetooth_transport *t, DBusMessageIter *i) {
     const char *key;
     DBusMessageIter variant_i;
+    bluez_transport_private *p;
+
+    pa_assert(t);
+    pa_assert_se(p = t->backend_private);
 
     key = check_variant_property(i);
     if (key == NULL)
@@ -1099,11 +1125,11 @@ static int transport_parse_property(pa_bluetooth_transport *t, DBusMessageIter *
                 bool old_any_connected = pa_bluetooth_device_any_audio_connected(t->device);
 
                 if (transport_state_from_string(value, &t->state) < 0) {
-                    pa_log("Transport %s has an invalid state: '%s'", t->path, value);
+                    pa_log("Transport %s has an invalid state: '%s'", p->path, value);
                     return -1;
                 }
 
-                pa_log_debug("dbus: transport %s set to state '%s'", t->path, value);
+                pa_log_debug("dbus: transport %s set to state '%s'", p->path, value);
                 pa_hook_fire(&t->device->discovery->hooks[PA_BLUETOOTH_HOOK_TRANSPORT_STATE_CHANGED], t);
 
                 if (old_any_connected != pa_bluetooth_device_any_audio_connected(t->device))
@@ -1138,11 +1164,14 @@ static int parse_transport_properties(pa_bluetooth_transport *t, DBusMessageIter
 static DBusHandlerResult filter_cb(DBusConnection *bus, DBusMessage *m, void *userdata) {
     DBusError err;
     pa_bluetooth_discovery *y;
+    bluez_backend_private *bbp;
 
     pa_assert(bus);
     pa_assert(m);
 
     pa_assert_se(y = userdata);
+
+    bbp = &y->backend_private;
 
     dbus_error_init(&err);
 
@@ -1262,7 +1291,7 @@ static DBusHandlerResult filter_cb(DBusConnection *bus, DBusMessage *m, void *us
         pa_bluetooth_transport *t;
         DBusMessageIter arg_i;
 
-        if (!(t = pa_hashmap_get(y->transports, dbus_message_get_path(m))))
+        if (!(t = pa_hashmap_get(bbp->transports, dbus_message_get_path(m))))
             goto fail;
 
         if (!dbus_message_iter_init(m, &arg_i)) {
@@ -1359,7 +1388,7 @@ static DBusHandlerResult filter_cb(DBusConnection *bus, DBusMessage *m, void *us
         } else if (pa_streq(interface, "org.bluez.MediaTransport1")) {
             pa_bluetooth_transport *t;
 
-            if (!(t = pa_hashmap_get(y->transports, dbus_message_get_path(m))))
+            if (!(t = pa_hashmap_get(bbp->transports, dbus_message_get_path(m))))
                 return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 
             parse_transport_properties(t, &arg_i);
@@ -1443,10 +1472,12 @@ int pa_bluetooth_transport_acquire(pa_bluetooth_transport *t, bool optional, siz
     int ret;
     uint16_t i, o;
     const char *method;
+    bluez_transport_private *p;
 
     pa_assert(t);
     pa_assert(t->device);
     pa_assert(t->device->discovery);
+    pa_assert_se(p = t->backend_private);
 
     dbus_error_init(&err);
 
@@ -1461,28 +1492,28 @@ int pa_bluetooth_transport_acquire(pa_bluetooth_transport *t, bool optional, siz
                suspended in the meantime, so we can't really guarantee that the
                stream will not be requested with the API in BlueZ 4.x */
             if (t->state < PA_BLUETOOTH_TRANSPORT_STATE_PLAYING) {
-                pa_log_info("Failed optional acquire of unavailable transport %s", t->path);
+                pa_log_info("Failed optional acquire of unavailable transport %s", p->path);
                 return -1;
             }
         }
 
         method = "Acquire";
-        pa_assert_se(m = dbus_message_new_method_call(t->owner, t->path, "org.bluez.MediaTransport", method));
+        pa_assert_se(m = dbus_message_new_method_call(p->owner, p->path, "org.bluez.MediaTransport", method));
         pa_assert_se(dbus_message_append_args(m, DBUS_TYPE_STRING, &accesstype, DBUS_TYPE_INVALID));
     } else {
         pa_assert(t->device->discovery->version == BLUEZ_VERSION_5);
 
         method = optional ? "TryAcquire" : "Acquire";
-        pa_assert_se(m = dbus_message_new_method_call(t->owner, t->path, "org.bluez.MediaTransport1", method));
+        pa_assert_se(m = dbus_message_new_method_call(p->owner, p->path, "org.bluez.MediaTransport1", method));
     }
 
     r = dbus_connection_send_with_reply_and_block(pa_dbus_connection_get(t->device->discovery->connection), m, -1, &err);
 
     if (!r) {
         if (optional && pa_streq(err.name, "org.bluez.Error.NotAvailable"))
-            pa_log_info("Failed optional acquire of unavailable transport %s", t->path);
+            pa_log_info("Failed optional acquire of unavailable transport %s", p->path);
         else
-            pa_log("Transport %s() failed for transport %s (%s)", method, t->path, err.message);
+            pa_log("Transport %s() failed for transport %s (%s)", method, p->path, err.message);
 
         dbus_error_free(&err);
         return -1;
@@ -1510,33 +1541,35 @@ fail:
 void pa_bluetooth_transport_release(pa_bluetooth_transport *t) {
     DBusMessage *m;
     DBusError err;
+    bluez_transport_private *p;
 
     pa_assert(t);
     pa_assert(t->device);
     pa_assert(t->device->discovery);
+    pa_assert_se(p = t->backend_private);
 
     dbus_error_init(&err);
 
     if (t->device->discovery->version == BLUEZ_VERSION_4) {
         const char *accesstype = "rw";
 
-        pa_assert_se(m = dbus_message_new_method_call(t->owner, t->path, "org.bluez.MediaTransport", "Release"));
+        pa_assert_se(m = dbus_message_new_method_call(p->owner, p->path, "org.bluez.MediaTransport", "Release"));
         pa_assert_se(dbus_message_append_args(m, DBUS_TYPE_STRING, &accesstype, DBUS_TYPE_INVALID));
     } else if (t->state <= PA_BLUETOOTH_TRANSPORT_STATE_IDLE) {
-        pa_log_info("Transport %s auto-released by BlueZ or already released", t->path);
+        pa_log_info("Transport %s auto-released by BlueZ or already released", p->path);
         return;
     } else {
         pa_assert(t->device->discovery->version == BLUEZ_VERSION_5);
-        pa_assert_se(m = dbus_message_new_method_call(t->owner, t->path, "org.bluez.MediaTransport1", "Release"));
+        pa_assert_se(m = dbus_message_new_method_call(p->owner, p->path, "org.bluez.MediaTransport1", "Release"));
     }
 
     dbus_connection_send_with_reply_and_block(pa_dbus_connection_get(t->device->discovery->connection), m, -1, &err);
 
     if (dbus_error_is_set(&err)) {
-        pa_log("Failed to release transport %s: %s", t->path, err.message);
+        pa_log("Failed to release transport %s: %s", p->path, err.message);
         dbus_error_free(&err);
     } else
-        pa_log_info("Transport %s released", t->path);
+        pa_log_info("Transport %s released", p->path);
 }
 
 static void set_property(pa_bluetooth_discovery *y, const char *bus, const char *path, const char *interface,
@@ -1597,6 +1630,7 @@ static pa_bluetooth_transport *transport_new(pa_bluetooth_device *d, const char 
                                              const uint8_t *config, int size) {
     pa_bluetooth_transport *t;
     pa_bluetooth_transport_new_data data;
+    bluez_transport_private *private;
 
     data.device = d;
     data.profile = p;
@@ -1610,8 +1644,10 @@ static pa_bluetooth_transport *transport_new(pa_bluetooth_device *d, const char 
 
     t = pa_bt_backend_notify_transport_added(&data);
 
-    t->owner = pa_xstrdup(owner);
-    t->path = pa_xstrdup(path);
+    private = pa_xnew0(bluez_transport_private, 1);
+    private->owner = pa_xstrdup(owner);
+    private->path = pa_xstrdup(path);
+    t->backend_private = private;
 
     return t;
 }
@@ -1620,6 +1656,7 @@ static DBusMessage *endpoint_set_configuration(DBusConnection *conn, DBusMessage
     pa_bluetooth_discovery *y = userdata;
     pa_bluetooth_device *d;
     pa_bluetooth_transport *t;
+    bluez_backend_private *bbp;
     const char *sender, *path, *dev_path = NULL, *uuid = NULL;
     uint8_t *config = NULL;
     int size = 0;
@@ -1629,6 +1666,8 @@ static DBusMessage *endpoint_set_configuration(DBusConnection *conn, DBusMessage
     DBusMessage *r;
     bool old_any_connected;
 
+    bbp = &y->backend_private;
+
     if (!dbus_message_iter_init(m, &args) || !pa_streq(dbus_message_get_signature(m), "oa{sv}")) {
         pa_log("Invalid signature for method SetConfiguration");
         goto fail2;
@@ -1636,7 +1675,7 @@ static DBusMessage *endpoint_set_configuration(DBusConnection *conn, DBusMessage
 
     dbus_message_iter_get_basic(&args, &path);
 
-    if (pa_hashmap_get(y->transports, path)) {
+    if (pa_hashmap_get(bbp->transports, path)) {
         pa_log("Endpoint SetConfiguration: Transport %s is already configured.", path);
         goto fail2;
     }
@@ -1717,9 +1756,9 @@ static DBusMessage *endpoint_set_configuration(DBusConnection *conn, DBusMessage
         t->nrec = nrec;
 
     d->transports[p] = t;
-    pa_assert_se(pa_hashmap_put(y->transports, t->path, t) >= 0);
+    pa_assert_se(pa_hashmap_put(bbp->transports, path, t) >= 0);
 
-    pa_log_debug("Transport %s profile %d available", t->path, t->profile);
+    pa_log_debug("Transport %s profile %d available", path, p);
 
     pa_assert_se(r = dbus_message_new_method_return(m));
     pa_assert_se(dbus_connection_send(pa_dbus_connection_get(y->connection), r, NULL));
@@ -1741,9 +1780,14 @@ fail2:
 static DBusMessage *endpoint_clear_configuration(DBusConnection *c, DBusMessage *m, void *userdata) {
     pa_bluetooth_discovery *y = userdata;
     pa_bluetooth_transport *t;
+    bluez_backend_private *bbp;
     DBusMessage *r;
     DBusError e;
     const char *path;
+
+    pa_assert(y);
+
+    bbp = &y->backend_private;
 
     dbus_error_init(&e);
 
@@ -1753,7 +1797,7 @@ static DBusMessage *endpoint_clear_configuration(DBusConnection *c, DBusMessage 
         goto fail;
     }
 
-    if ((t = pa_hashmap_get(y->transports, path)))
+    if ((t = pa_hashmap_remove(bbp->transports, path)))
         pa_bt_backend_notify_transport_removed(t);
 
     pa_assert_se(r = dbus_message_new_method_return(m));
@@ -1983,6 +2027,8 @@ pa_bluetooth_backend bluez_backend = {
 static void bluez_backend_init(pa_bluetooth_discovery *y) {
     bluez_backend_private *bbp = &y->backend_private;
 
+    bbp->transports = pa_hashmap_new(pa_idxset_string_hash_func, pa_idxset_string_compare_func);
+
     pa_bt_backend_register(y, &bluez_backend, PROFILE_A2DP, bbp);
     pa_bt_backend_register(y, &bluez_backend, PROFILE_A2DP_SOURCE, bbp);
 
@@ -1994,6 +2040,8 @@ static void bluez_backend_init(pa_bluetooth_discovery *y) {
 }
 
 static void bluez_backend_done(pa_bluetooth_discovery *y) {
+    bluez_backend_private *bbp = &y->backend_private;
+
     pa_bt_backend_unregister(y, &bluez_backend, PROFILE_A2DP);
     pa_bt_backend_unregister(y, &bluez_backend, PROFILE_A2DP_SOURCE);
 
@@ -2002,6 +2050,11 @@ static void bluez_backend_done(pa_bluetooth_discovery *y) {
 
     pa_bt_backend_unregister(y, &bluez_backend, PROFILE_HSP);
     pa_bt_backend_unregister(y, &bluez_backend, PROFILE_HFGW);
+
+    if (bbp->transports) {
+        pa_assert(pa_hashmap_isempty(bbp->transports));
+        pa_hashmap_free(bbp->transports, NULL);
+    }
 }
 
 pa_bluetooth_discovery* pa_bluetooth_discovery_get(pa_core *c) {
@@ -2024,7 +2077,6 @@ pa_bluetooth_discovery* pa_bluetooth_discovery_get(pa_core *c) {
     PA_REFCNT_INIT(y);
     y->core = c;
     y->devices = pa_hashmap_new(pa_idxset_string_hash_func, pa_idxset_string_compare_func);
-    y->transports = pa_hashmap_new(pa_idxset_string_hash_func, pa_idxset_string_compare_func);
     PA_LLIST_HEAD_INIT(pa_dbus_pending, y->pending);
 
     for (i = 0; i < PA_BLUETOOTH_HOOK_MAX; i++)
@@ -2115,11 +2167,6 @@ void pa_bluetooth_discovery_unref(pa_bluetooth_discovery *y) {
     if (y->devices) {
         remove_all_devices(y);
         pa_hashmap_free(y->devices, NULL);
-    }
-
-    if (y->transports) {
-        pa_assert(pa_hashmap_isempty(y->transports));
-        pa_hashmap_free(y->transports, NULL);
     }
 
     if (y->connection) {
@@ -2343,7 +2390,6 @@ void pa_bt_backend_notify_transport_removed(pa_bluetooth_transport *t) {
     pa_log_debug("Removing transport for device %s profile %s", d->path, pa_bt_profile_to_string(t->profile));
 
     d->transports[t->profile] = NULL;
-    pa_hashmap_remove(y->transports, t->path);
     t->state = PA_BLUETOOTH_TRANSPORT_STATE_DISCONNECTED;
     pa_hook_fire(&y->hooks[PA_BLUETOOTH_HOOK_TRANSPORT_STATE_CHANGED], t);
 
