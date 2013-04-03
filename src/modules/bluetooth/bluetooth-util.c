@@ -1266,7 +1266,7 @@ static DBusHandlerResult filter_cb(DBusConnection *bus, DBusMessage *m, void *us
             goto fail;
 
         if (!dbus_message_iter_init(m, &arg_i)) {
-            pa_log("Failed to parse PropertyChanged for transport %s", t->path);
+            pa_log("Failed to parse PropertyChanged for transport %s", dbus_message_get_path(m));
             goto fail;
         }
 
@@ -2340,7 +2340,7 @@ void pa_bt_backend_notify_transport_removed(pa_bluetooth_transport *t) {
 
     old_any_connected = pa_bluetooth_device_any_audio_connected(d);
 
-    pa_log_debug("Removing transport %s profile %d", t->path, t->profile);
+    pa_log_debug("Removing transport for device %s profile %s", d->path, pa_bt_profile_to_string(t->profile));
 
     d->transports[t->profile] = NULL;
     pa_hashmap_remove(y->transports, t->path);
@@ -2364,7 +2364,7 @@ void pa_bt_backend_notify_state(pa_bluetooth_transport *t, pa_bluetooth_transpor
     if (t->state == state)
         return;
 
-    pa_log_debug("Transport %s (profile %s) changed state from %s to %s.", t->path,
+    pa_log_debug("Transport for device %s profile %s changed state from %s to %s.", d->path,
                  pa_bt_profile_to_string(t->profile), transport_state_to_string(t->state),
                  transport_state_to_string(state));
 
@@ -2385,7 +2385,8 @@ void pa_bt_backend_notify_nrec(pa_bluetooth_transport *t, bool nrec) {
         return;
 
     t->nrec = nrec;
-    pa_log_debug("Transport %s: Property 'NREC' changed to %s.", t->path, t->nrec ? "True" : "False");
+    pa_log_debug("Transport for device %s profile %s: 'NREC' changed to %s.", d->path, pa_bt_profile_to_string(t->profile),
+                 t->nrec ? "True" : "False");
     pa_hook_fire(&y->hooks[PA_BLUETOOTH_HOOK_TRANSPORT_NREC_CHANGED], t);
 }
 

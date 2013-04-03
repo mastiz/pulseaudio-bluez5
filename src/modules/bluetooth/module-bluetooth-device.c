@@ -284,7 +284,7 @@ static void setup_stream(struct userdata *u) {
     struct pollfd *pollfd;
     int one;
 
-    pa_log_info("Transport %s resuming", u->transport->path);
+    pa_log_info("Transport for device %s profile %s resuming", u->device->path, pa_bt_profile_to_string(u->transport->profile));
 
     bt_transport_config_mtu(u);
 
@@ -350,7 +350,8 @@ static void bt_transport_release(struct userdata *u) {
     if (!u->transport_acquired)
         return;
 
-    pa_log_debug("Releasing transport %s", u->transport->path);
+    pa_log_debug("Releasing transport for device %s profile %s", u->device->path,
+                 pa_bt_profile_to_string(u->transport->profile));
 
     pa_bluetooth_transport_release(u->transport);
 
@@ -365,14 +366,16 @@ static int bt_transport_acquire(struct userdata *u, bool optional) {
     if (u->transport_acquired)
         return 0;
 
-    pa_log_debug("Acquiring transport %s", u->transport->path);
+    pa_log_debug("Acquiring transport for device %s profile %s", u->device->path,
+                 pa_bt_profile_to_string(u->transport->profile));
 
     u->stream_fd = pa_bluetooth_transport_acquire(u->transport, optional, &u->read_link_mtu, &u->write_link_mtu);
     if (u->stream_fd < 0)
         return -1;
 
     u->transport_acquired = true;
-    pa_log_info("Transport %s acquired: fd %d", u->transport->path, u->stream_fd);
+    pa_log_info("Transport for device %s profile %s acquired: fd %d", u->device->path,
+                pa_bt_profile_to_string(u->transport->profile), u->stream_fd);
 
     return 0;
 }
