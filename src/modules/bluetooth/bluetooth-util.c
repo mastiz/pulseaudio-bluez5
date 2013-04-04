@@ -1591,23 +1591,22 @@ static int setup_dbus(pa_bluetooth_discovery *y) {
 static pa_bluetooth_transport *transport_new(pa_bluetooth_device *d, const char *owner, const char *path, enum profile p,
                                              const uint8_t *config, int size) {
     pa_bluetooth_transport *t;
+    pa_bluetooth_transport_new_data data;
 
-    t = pa_xnew0(pa_bluetooth_transport, 1);
-    t->device = d;
-    t->owner = pa_xstrdup(owner);
-    t->path = pa_xstrdup(path);
-    t->profile = p;
-    t->config_size = size;
-
-    if (size > 0) {
-        t->config = pa_xnew(uint8_t, size);
-        memcpy(t->config, config, size);
-    }
+    data.device = d;
+    data.profile = p;
+    data.config_size = size;
+    data.config = config;
 
     if (d->discovery->version == BLUEZ_VERSION_4)
-        t->state = audio_state_to_transport_state(d->profile_state[p]);
+        data.state = audio_state_to_transport_state(d->profile_state[p]);
     else
-        t->state = PA_BLUETOOTH_TRANSPORT_STATE_IDLE;
+        data.state = PA_BLUETOOTH_TRANSPORT_STATE_IDLE;
+
+    t = pa_bt_backend_notify_transport_added(&data);
+
+    t->owner = pa_xstrdup(owner);
+    t->path = pa_xstrdup(path);
 
     return t;
 }
@@ -2272,6 +2271,26 @@ void pa_bt_backend_unregister(pa_bluetooth_discovery *y, pa_bluetooth_backend *b
 
     y->profiles[p].backend = NULL;
     y->profiles[p].backend_private = NULL;
+}
+
+pa_bluetooth_transport *pa_bt_backend_notify_transport_added(pa_bluetooth_transport_new_data *data) {
+    pa_bluetooth_transport *t;
+
+    pa_assert(data);
+
+    t = pa_xnew0(pa_bluetooth_transport, 1);
+    t->device = data->device;
+    t->profile = data->profile;
+    t->state = data->state;
+
+    if ((t->config_size = data->config_size) > 0) {
+        pa_assert(data->config);
+
+        t->config = pa_xnew(uint8_t, data->config_size);
+        memcpy(t->config, data->config, data->config_size);
+    }
+
+    return t;
 }
 
 void pa_bt_backend_notify_transport_removed(pa_bluetooth_transport *t) {

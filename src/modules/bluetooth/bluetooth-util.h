@@ -188,6 +188,19 @@ int pa_bt_backend_register(pa_bluetooth_discovery *y, pa_bluetooth_backend *b, e
 void pa_bt_backend_unregister(pa_bluetooth_discovery *y, pa_bluetooth_backend *b, enum profile p);
 
 /* Reporting of events from backend to Bluetooth core */
+typedef struct pa_bluetooth_transport_new_data {
+    pa_bluetooth_device *device;
+    enum profile profile;
+    uint8_t codec;
+    const uint8_t *config;
+    int config_size;
+    pa_bluetooth_transport_state_t state;
+    bool nrec;
+    uint16_t microphone_gain;
+    uint16_t speaker_gain;
+} pa_bluetooth_transport_new_data;
+
+pa_bluetooth_transport *pa_bt_backend_notify_transport_added(pa_bluetooth_transport_new_data *data);
 void pa_bt_backend_notify_transport_removed(pa_bluetooth_transport *t);
 void pa_bt_backend_notify_state(pa_bluetooth_transport *t, pa_bluetooth_transport_state_t state);
 void pa_bt_backend_notify_nrec(pa_bluetooth_transport *t, bool nrec);
