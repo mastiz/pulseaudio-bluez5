@@ -97,6 +97,7 @@ struct profile_data {
 };
 
 typedef struct bluez_backend_private {
+    pa_bluetooth_discovery *discovery;
     pa_hashmap *transports;
 } bluez_backend_private;
 
@@ -1689,11 +1690,10 @@ static pa_bluetooth_transport *transport_new(pa_bluetooth_device *d, const char 
     return t;
 }
 
-static DBusMessage *endpoint_set_configuration(DBusConnection *conn, DBusMessage *m, void *userdata) {
-    pa_bluetooth_discovery *y = userdata;
+static DBusMessage *endpoint_set_configuration(DBusConnection *conn, DBusMessage *m, bluez_backend_private *bbp) {
+    pa_bluetooth_discovery *y;
     pa_bluetooth_device *d;
     pa_bluetooth_transport *t;
-    bluez_backend_private *bbp;
     const char *sender, *path, *dev_path = NULL, *uuid = NULL;
     uint8_t *config = NULL;
     int size = 0;
@@ -1703,7 +1703,8 @@ static DBusMessage *endpoint_set_configuration(DBusConnection *conn, DBusMessage
     DBusMessage *r;
     bool old_any_connected;
 
-    bbp = &y->backend_private;
+    pa_assert(bbp);
+    pa_assert_se(y = bbp->discovery);
 
     if (!dbus_message_iter_init(m, &args) || !pa_streq(dbus_message_get_signature(m), "oa{sv}")) {
         pa_log("Invalid signature for method SetConfiguration");
@@ -1814,17 +1815,13 @@ fail2:
     return r;
 }
 
-static DBusMessage *endpoint_clear_configuration(DBusConnection *c, DBusMessage *m, void *userdata) {
-    pa_bluetooth_discovery *y = userdata;
+static DBusMessage *endpoint_clear_configuration(DBusConnection *c, DBusMessage *m, bluez_backend_private *bbp) {
     pa_bluetooth_transport *t;
-    bluez_backend_private *bbp;
     DBusMessage *r;
     DBusError e;
     const char *path;
 
-    pa_assert(y);
-
-    bbp = &y->backend_private;
+    pa_assert(bbp);
 
     dbus_error_init(&e);
 
@@ -1891,8 +1888,8 @@ static uint8_t a2dp_default_bitpool(uint8_t freq, uint8_t mode) {
     }
 }
 
-static DBusMessage *endpoint_select_configuration(DBusConnection *c, DBusMessage *m, void *userdata) {
-    pa_bluetooth_discovery *y = userdata;
+static DBusMessage *endpoint_select_configuration(DBusConnection *c, DBusMessage *m, bluez_backend_private *bbp) {
+    pa_bluetooth_discovery *y;
     a2dp_sbc_t *cap, config;
     uint8_t *pconf = (uint8_t *) &config;
     int i, size;
@@ -1908,6 +1905,9 @@ static DBusMessage *endpoint_select_configuration(DBusConnection *c, DBusMessage
         { 44100U, SBC_SAMPLING_FREQ_44100 },
         { 48000U, SBC_SAMPLING_FREQ_48000 }
     };
+
+    pa_assert(bbp);
+    pa_assert_se(y = bbp->discovery);
 
     dbus_error_init(&e);
 
@@ -2014,12 +2014,14 @@ fail:
 }
 
 static DBusHandlerResult endpoint_handler(DBusConnection *c, DBusMessage *m, void *userdata) {
-    struct pa_bluetooth_discovery *y = userdata;
+    bluez_backend_private *bbp = userdata;
+    pa_bluetooth_discovery *y;
     DBusMessage *r = NULL;
     DBusError e;
     const char *path, *interface, *member;
 
-    pa_assert(y);
+    pa_assert(bbp);
+    pa_assert_se(y = bbp->discovery);
 
     path = dbus_message_get_path(m);
     interface = dbus_message_get_interface(m);
@@ -2091,6 +2093,7 @@ pa_bluetooth_backend bluez_backend = {
 static void bluez_backend_init(pa_bluetooth_discovery *y) {
     bluez_backend_private *bbp = &y->backend_private;
 
+    bbp->discovery = y;
     bbp->transports = pa_hashmap_new(pa_idxset_string_hash_func, pa_idxset_string_compare_func);
 
     pa_bt_backend_register(y, &bluez_backend, PROFILE_A2DP, bbp);
@@ -2188,10 +2191,10 @@ pa_bluetooth_discovery* pa_bluetooth_discovery_get(pa_core *c) {
         goto fail;
     }
 
-    pa_assert_se(dbus_connection_register_object_path(conn, HFP_AG_ENDPOINT, &vtable_endpoint, y));
-    pa_assert_se(dbus_connection_register_object_path(conn, HFP_HS_ENDPOINT, &vtable_endpoint, y));
-    pa_assert_se(dbus_connection_register_object_path(conn, A2DP_SOURCE_ENDPOINT, &vtable_endpoint, y));
-    pa_assert_se(dbus_connection_register_object_path(conn, A2DP_SINK_ENDPOINT, &vtable_endpoint, y));
+    pa_assert_se(dbus_connection_register_object_path(conn, HFP_AG_ENDPOINT, &vtable_endpoint, &y->backend_private));
+    pa_assert_se(dbus_connection_register_object_path(conn, HFP_HS_ENDPOINT, &vtable_endpoint, &y->backend_private));
+    pa_assert_se(dbus_connection_register_object_path(conn, A2DP_SOURCE_ENDPOINT, &vtable_endpoint, &y->backend_private));
+    pa_assert_se(dbus_connection_register_object_path(conn, A2DP_SINK_ENDPOINT, &vtable_endpoint, &y->backend_private));
 
     init_bluez(y);
 
