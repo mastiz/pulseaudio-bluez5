@@ -911,11 +911,6 @@ static void register_endpoint(pa_bluetooth_discovery *y, const char *path, const
 static void register_adapter_endpoints(pa_bluetooth_discovery *y, const char *path) {
     register_endpoint(y, path, A2DP_SOURCE_ENDPOINT, A2DP_SOURCE_UUID);
     register_endpoint(y, path, A2DP_SINK_ENDPOINT, A2DP_SINK_UUID);
-
-    /* For BlueZ 5, only A2DP is registered in the Media API */
-    if (y->version >= BLUEZ_VERSION_5)
-        return;
-
     register_endpoint(y, path, HFP_AG_ENDPOINT, HFP_AG_UUID);
     register_endpoint(y, path, HFP_HS_ENDPOINT, HFP_HS_UUID);
 }
